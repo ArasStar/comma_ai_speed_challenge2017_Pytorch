@@ -119,8 +119,6 @@ def opticalFlowDense(image_current, image_next):
     return rgb_flow
 
 
-
-
 def read_clean(dataset_type):
     print("reading clean "+dataset_type+ "dataset to_csv")
     return pd.read_csv(os.path.join(ROOT,"clean", dataset_type+'.csv')) #train2_meta
@@ -178,6 +176,19 @@ def shuffle_and_split(df_data, seed=1, split=[0.8,0.2]):
         train_data.to_csv(os.path.join(ROOT,"rgb_flow","train.csv"))
         valid_data.to_csv(os.path.join(ROOT,"rgb_flow","valid.csv"))
 
+
+def pair_to_rgbflow(pair,crop=False):
+    i1,i2 = pair["image_index_x"], pair["image_index_y"]
+    x1_path ,x2_path = pair["image_path_x"],pair["image_path_y"]
+    assert(i2-i1==1)
+
+    bright_factor = 0.2 + np.random.uniform()
+    x1,y1 = preprocess_image_from_path(x1_path, pair["speed_x"],bright_factor, crop)
+    x2,y2 = preprocess_image_from_path(x2_path, pair["speed_y"],bright_factor, crop)
+    rgb_flow = opticalFlowDense(x1,x2)
+    speed = np.mean([y1,y2])
+
+    return rgb_flow, speed
 
 def frames_to_rgb_flow(dataset_type, split= [0.8,0.2], crop=None):
     print("creating rgbflow for "+ dataset_type)
@@ -241,8 +252,6 @@ if __name__ == "__main__":
         main("train")
 
 
-
-
 def trial_test():
     print("TRIALS")
     pic=10200
@@ -281,12 +290,10 @@ def trial_test():
     plt.figure()
     plt.imshow(img2)
 
-
     rgb_flow = opticalFlowDense(img1,img2)
 
     plt.figure()
     plt.imshow(rgb_flow)
-
 
 
     plt.show()

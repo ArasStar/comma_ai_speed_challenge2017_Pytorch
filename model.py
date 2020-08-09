@@ -12,8 +12,6 @@ import torch.nn.functional as F
 from math import floor
 import matplotlib.pyplot as plt
 
-
-
 # constants
 ROOT = "/home/aras/Desktop/commaAI/speed_challenge_2017"
 
