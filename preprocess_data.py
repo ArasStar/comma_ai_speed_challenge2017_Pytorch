@@ -1,6 +1,3 @@
-'''
-PREPROCESS --> OPTICAL FLOW --> SHUFFLE
-'''
 import numpy as np
 import cv2
 import os
@@ -13,7 +10,7 @@ from tqdm import tqdm
 import pandas as pd
 import h5py
 import sys
-
+import os
 
 # constants
 ROOT = "/home/aras/Desktop/commaAI/speed_challenge_2017"
@@ -118,87 +115,6 @@ def opticalFlowDense(image_current, image_next):
 
     return rgb_flow
 
-
-def read_clean(dataset_type):
-    print("reading clean "+dataset_type+ "dataset to_csv")
-    return pd.read_csv(os.path.join(ROOT,"clean", dataset_type+'.csv')) #train2_meta
-
-def pairup_data(df_data, dataset_type):
-    '''creates a csv that each row has consecutive frames idx_(i),idx_(i+1)'''
-    print("creating dataset csv with paired frames")
-    df_data_current = df_data.iloc[:-1]
-    df_data_next = df_data.iloc[1:].reset_index().drop(["index"], axis = 1)
-    df_paired = df_data_current.merge(df_data_next,left_index=True, right_index=True)
-    df_paired.to_csv(os.path.join(ROOT,"clean" 'paired_clean_'+dataset_type+'.csv'), index=False)
-    print( "done pairing frames, shape is:",df_paired.shape)
-    return df_paired
-
-
-def create_data(df_paired, dataset_type, crop=None):
-    ''' Preprocess pairs that calculate optical flow'''
-    print("processing pairs for rgb_flow")
-    meta_dict = {}
-    for idx, pair in tqdm(df_paired.iterrows(),total=len(df_paired)):
-        i1,i2 = pair["image_index_x"], pair["image_index_y"]
-        x1_path ,x2_path = pair["image_path_x"],pair["image_path_y"]
-        assert(i2-i1==1)
-        img_path = os.path.join(ROOT,"rgb_flow",dataset_type,str(i1)+"_"+str(i2)+".jpg")
-
-        bright_factor = 0.2 + np.random.uniform()
-        x1,y1 = preprocess_image_from_path(x1_path, pair["speed_x"],bright_factor, crop)
-        x2,y2 = preprocess_image_from_path(x2_path, pair["speed_y"],bright_factor, crop)
-        rgb_flow = opticalFlowDense(x1,x2)
-        speed = np.mean([y1,y2])
-
-        meta_dict[idx] = [img_path, idx, speed]
-        skvideo.io.vwrite(img_path, rgb_flow)
-
-
-    meta_df = pd.DataFrame.from_dict(meta_dict, orient='index')
-    meta_df.columns = ['image_path', 'image_index', 'speed']
-    meta_df.to_csv(os.path.join(ROOT,"rgb_flow", dataset_type+'.csv'), index=False)
-
-    print("finished preprocessing and calculated optical flow of pairs, shape is:", meta_df.shape)
-    return meta_df
-
-
-def shuffle_and_split(df_data, seed=1, split=[0.8,0.2]):
-    print("shuffling and spliting to train and valid")
-    #shuffle
-    df_shuffled = df_data.sample(n=len(df_data), random_state=seed)
-
-    if split == False:#no split
-        train_data.to_csv(os.path.join(ROOT,"rgb_flow","train.csv"))
-    else:
-        assert(sum(split)==1.0)
-        split_idx = int(len(df_data)*split[0])
-        train_data, valid_data = df_shuffled.iloc[:split_idx], df_shuffled.iloc[split_idx:]
-        train_data.to_csv(os.path.join(ROOT,"rgb_flow","train.csv"))
-        valid_data.to_csv(os.path.join(ROOT,"rgb_flow","valid.csv"))
-
-
-def pair_to_rgbflow(pair,crop=False):
-    i1,i2 = pair["image_index_x"], pair["image_index_y"]
-    x1_path ,x2_path = pair["image_path_x"],pair["image_path_y"]
-    assert(i2-i1==1)
-
-    bright_factor = 0.2 + np.random.uniform()
-    x1,y1 = preprocess_image_from_path(x1_path, pair["speed_x"],bright_factor, crop)
-    x2,y2 = preprocess_image_from_path(x2_path, pair["speed_y"],bright_factor, crop)
-    rgb_flow = opticalFlowDense(x1,x2)
-    speed = np.mean([y1,y2])
-
-    return rgb_flow, speed
-
-def frames_to_rgb_flow(dataset_type, split= [0.8,0.2], crop=None):
-    print("creating rgbflow for "+ dataset_type)
-    df_meta = read_clean(dataset_type)
-    df_paired = pairup_data(df_meta,dataset_type)
-    df_preprocessed = create_data(df_paired, dataset_type,crop=crop)
-    if dataset_type == "train":
-        shuffle_and_split(df_preprocessed,split=split)
-
-
 def video_to_frames(video_path, img_folder, dataset_type):
     '''
     takes the frames out of the video and creates a csv_file:
@@ -230,71 +146,89 @@ def video_to_frames(video_path, img_folder, dataset_type):
     return "done dataset_constructor--videos to frames"
 
 
-def main(dataset_type):
-    print("creating for "+dataset_type)
-    path = path_dict[dataset_type]
-    df_meta = read_clean(dataset_type)
-    df_paired = pairup_data(df_meta,dataset_type)
-    df_preprocessed= create_data(df_paired, path, dataset_type)
-    if dataset_type == "train":
-        shuffle_and_split(df_preprocessed)
+def my_train_valid_split(dframe, seed_val):
+    """ shuffles and splits with the same ratio as Jovsa
+    """
+    print("---Shuffling..")
+    shuffled = dframe.iloc[:-1].sample(n=len(dframe)-1 ,random_state=seed_val)
+
+    print('---Creating pairs succesive frames')
+    paireddf = pd.DataFrame()
+    for i in tqdm(range(len(shuffled))):
+        idx1 = shuffled.iloc[i].image_index
+        idx2 = idx1 + 1
+
+        row1 = dframe.iloc[[idx1]].reset_index()
+        row2 = dframe.iloc[[idx2]].reset_index()
+
+        paired_frames = [paireddf, row1, row2]
+        paireddf = pd.concat(paired_frames, axis = 0, join = 'outer', ignore_index=False)
 
 
-if __name__ == "__main__":
-    if len(sys.argv)>2:
-        print("error in passing arg' you need to pass only one argument")
-    elif len(sys.argv)==2:
-        if not(sys.argv[1] == "train" or sys.argv[1] == "test"):
-            print("wrong input:",sys.argv[1])
-        else:
-            main(sys.argv[1])
-    else:
-        main("train")
+    print("len of paired df  ",len(paireddf))
+    print("---Spliting...")
+    split_idx = int(len(shuffled)*0.8)*2
+
+    train_data = paireddf.iloc[:split_idx]
+    valid_data = paireddf.iloc[split_idx:]
+    print("--done--")
+
+    return train_data, valid_data
 
 
-def trial_test():
-    print("TRIALS")
-    pic=10200
-    bright_factor = None
-    clean_pic_path = os.path.join(CLEAN_IMGS_TRAIN,str(pic)+".jpg")
-    #clean_pic_path = os.path.join(CLEAN_IMGS_TEST,str(pic)+".jpg")
+def my_generate_training_data(data, batch_size = 32):
+    image_batch = np.zeros((batch_size, 66, 220, 3)) # nvidia input params
+    label_batch = np.zeros((batch_size))
+    idx = 1
+    while True:
 
-    img = cv2.imread(clean_pic_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        for i in range(batch_size):
+            if idx > len(data)-2:
+                idx = 1
 
-    plt.figure()
-    plt.imshow(img)
+            # Generate a random bright factor to apply to both image
+            bright_factor = 0.2 + np.random.uniform()
 
-    if bright_factor is not None:
-        img = change_brightness(img, bright_factor)
-    img1 = preprocess_image(img)
+            row_now = data.iloc[[idx]].reset_index()
+            row_prev = data.iloc[[idx - 1]].reset_index()
+            row_next = data.iloc[[idx + 1]].reset_index()
 
+            # Find the 3 respective times to determine frame order (current -> next)
 
-    plt.figure()
-    plt.imshow(img1)
+            time_now = row_now['image_index'].values[0]
+            time_prev = row_prev['image_index'].values[0]
+            time_next = row_next['image_index'].values[0]
 
+            if abs(time_now - time_prev) == 1 and time_now > time_prev:
+                row1 = row_prev
+                row2 = row_now
 
-    clean_pic_path = os.path.join(CLEAN_IMGS_TRAIN,str(pic+1)+".jpg")
-    #clean_pic_path = os.path.join(CLEAN_IMGS_TEST,str(pic)+".jpg")
+            elif abs(time_next - time_now) == 1 and time_next > time_now:
+                row1 = row_now
+                row2 = row_next
+            else:
+                print('Error generating row-generate training data')
 
-    img = cv2.imread(clean_pic_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            x1, y1 = preprocess_image_from_path(row1['image_path'].values[0],
+                                                row1['speed'].values[0],
+                                               bright_factor)
 
-    plt.figure()
-    plt.imshow(img)
+            # preprocess another image
+            x2, y2 = preprocess_image_from_path(row2['image_path'].values[0],
+                                                row2['speed'].values[0],
+                                               bright_factor)
 
-    if bright_factor is not None:
-        img = change_brightness(img, bright_factor)
-    img2 = preprocess_image(img)
+            # compute optical flow send in images as RGB
+            rgb_diff = opticalFlowDense(x1, x2)
 
-    plt.figure()
-    plt.imshow(img2)
+            # calculate mean speed
+            y = np.mean([y1, y2])
 
-    rgb_flow = opticalFlowDense(img1,img2)
+            image_batch[i] = rgb_diff
+            label_batch[i] = y
 
-    plt.figure()
-    plt.imshow(rgb_flow)
+            idx += 2
 
-
-    plt.show()
-    plt.close()
+        #print('image_batch', image_batch.shape, ' label_batch', label_batch)
+        # Shuffle the pairs before they get fed into the network
+        yield shuffle(image_batch, label_batch)
