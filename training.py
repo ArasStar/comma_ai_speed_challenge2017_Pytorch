@@ -20,13 +20,12 @@ import torch
 import torch.nn as nn
 import torchvision
 from torchvision import datasets, models, transforms
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
+#from torch.utils.data import Dataset, DataLoader
+#import torchvision.transforms as transforms
 import torch.optim as optim
 from model import NVidia#nvidia model and the data loader
 from model import RGBOpticalFlowDataset
-from preprocess_data import video_to_frames
-from preprocess_data import frames_to_rgb_flow
+
 
 if torch.cuda.is_available():
     device = torch.device('cuda:0')
@@ -36,9 +35,11 @@ else:
     sys.exit()
 
 # constants
-ROOT = "/home/aras/Desktop/commaAI/speed_challenge_2017"
+ROOT = "/home/aras/Desktop/commaAI"
 MODEL_DIR = "/home/aras/Desktop/commaAI/models"
-
+CLEAN_DATA_PATH = os.path.join(ROOT,"speed_challenge_2017/clean_data")
+CLEAN_IMGS_TRAIN = os.path.join(CLEAN_DATA_PATH ,'train_imgs')
+CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
 
 def eval(plot_loss,validloader,trainloader,model,criterion):
     val_train_loss = [None,None]
@@ -58,43 +59,39 @@ def eval(plot_loss,validloader,trainloader,model,criterion):
     plot_loss.append(val_train_loss)
     model.train()
 
-def train(valid = False,test=False model_save=False):
+def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=85, batch_size=16, interval=200):
+
     #    MODEL
-    num_epoch = 10 #100 #90
-    batch_size= 16
 
-    model= NVidia().to(device=device)
+    train_set = CustomDataset()
+    valid_set = CustomDataset("valid_meta.csv",ROOT)
+
+
+    shape = tuple(train_set[0][0].shape)
+    model= NVidia(image_size=shape).to(device=device)
     criterion = nn.MSELoss().to(device=device)
-    optimizer = optim.Adam(model.parameters(),lr=0.0001)
-
-    # Load DATASET Train, Valid and Test
-    if not os.path.exists(os.path.join(ROOT,"clean","train.csv")):
-        print("no clean data found videos to frames working now\n")
-        video_to_frames(os.path.join(ROOT,"raw","train.mp4"),os.path.join(ROOT,"clean","train"),"train") # video_path and img folder
-        video_to_frames(os.path.join(ROOT,"raw","test.mp4"),os.path.join(ROOT,"clean","test"),"test")
-
-    if not os.path.exists(os.path.join(ROOT,"rgb_flow","train.csv")):
-        print("no clean rgbflow found, frame pairs to rgb_flow working now, also shuffle at the end\n")
-        plot = False
-        crop = None #flow
-        frames_to_rgb_flow("train", crop=crop)
-        frames_to_rgb_flow("test",crop=crop)
-
-
-    train_set = RGBOpticalFlowDataset("train.csv",ROOT)
-    valid_set = RGBOpticalFlowDataset("valid.csv",ROOT)
-
-    trainloader = DataLoader(train_set, batch_size= batch_size)
-    validloader = DataLoader(valid_set, batch_size= batch_size)
+    optimizer = optim.Adam(model.parameters(),lr=1e-4)
 
     plotloss = []
+    n_iter = len(trainloader)
     running_loss=0.0
+
+    print("# of trainable params: ", sum(p.numel() for p in model.parameters()))
+    print('N of iteration', n_iter*num_epoch)
+
     model.train()
+    if plot:
+        title =f'batchsize_{batch_size}__epoch_{num_epoch}'
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.set_title(title)
+        curve, = plt.plot([])
+        #ax.set_ylim(bottom=0, top=100)
+        #ax.set_xlim(left=-100, right=num_epoch*n_iter)
 
     for epoch in range(num_epoch):
         for i, (images, speeds) in enumerate(trainloader):
-            #if i==0:
-            #if valid: eval(plotloss, validloader, trainloader, model, criterion)
+            #if i==0 and valid: eval(plotloss, validloader, trainloader, model, criterion)
 
             images = images.to(device=device,dtype=torch.float)
             speeds = speeds.to(device=device,dtype=torch.float)
@@ -104,25 +101,38 @@ def train(valid = False,test=False model_save=False):
             loss = criterion(outputs,speeds)
             loss.backward()
             optimizer.step()
+
             running_loss += loss.item()
 
-            if i%200==199:
-                print('[%d, %5d] loss: %.3f' % (epoch+1, i+1,running_loss/200))
+            if (epoch*n_iter + i )%interval==(interval-1):
+                avgloss = running_loss/interval
+                print(f'epoch:{epoch+1}, {i+1}/{n_iter} loss: {avgloss}')
                 running_loss = 0.0
+                if plot:
+                    curve.set_ydata(np.append(curve.get_ydata(),avgloss))
+                    curve.set_xdata(np.append(curve.get_xdata(),(epoch*n_iter)+i+1))
+                    ax.relim()
+                    ax.autoscale_view(True,True,True)
+                    ax.set_ylim(bottom=0)
+                    plt.draw()
+                    plt.pause(0.0001)
 
+    # saving plot
+    if False and plot:
+        plt.savefig(title)
 
-    if model_save:
+    #SAVE MODEL
+    if save_model:
         modeltar= "batch"+str(batch_size)+"_epoch"+str(num_epoch)+".tar"
         torch.save({'epoch':num_epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'val_train_losses':plotloss}, os.path.join("/home/aras/Desktop", modeltar))
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_train_losses':plotloss}, os.path.join("/home/aras/Desktop", modeltar))
 
-
-    if test==True:
+    #TESTING
+    if test:
         print("testing")
         test_set = RGBOpticalFlowDataset("test.csv",ROOT)
-
         testloader = DataLoader(test_set, batch_size= batch_size)
         res = None
         model.eval()
@@ -136,29 +146,39 @@ def train(valid = False,test=False model_save=False):
             else:
                 res = torch.cat((res.cpu(),outputs.cpu())).cpu()
 
-
         res = torch.cat((res,res[0].view(1,1)))
-
 
         print(res.shape)
         np.savetxt("/home/aras/Desktop/test.txt",res.detach().numpy(),delimiter=', ')
 
 
-
-
 def main(argv):
-    opts, args = getopt.getopt(argv,"",["valid=","test=","model_save="])
+    def str2val(args):
+        for idx,[name,strval] in enumerate(args):
+            if name in ["valid","test","plot","model_save"]:
+                if strval in ["True","true", "1","t"]:
+                    args[idx]=(name,True)
+                elif strval in ["False","false", "0","f"]:
+                    args[idx]=(name,False)
+                else:
+                    print("ERRRRROR ARGUMENT PARSING:", name,strval)
+
+            elif name in ["num_epoch","batch_size","interval"]:
+                if strval.isdigit():
+                    args[idx]=(name,int(strval))
+                else:
+                    print("ERRRRROR ARGUMENT PARSING:", name,strval)
+            else:
+                print("ERRRRROR ARGUMENT PARSING:", name,strval)
+
+    opts, args = getopt.getopt(argv,"",["valid=","test=","plot=","model_save=","num_epoch=","batch_size=","interval="])
     opts = [(name[2:],val) for name, val in opts]
+    if opts: str2val(opts)
     train(**dict(opts))
 
 
-if __name__ == "__name__":
+if __name__ == "__main__":
     main(sys.argv[1:])
-
-
-
-
-
 
 
 

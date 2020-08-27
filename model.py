@@ -12,18 +12,16 @@ import torch.nn.functional as F
 from math import floor
 import matplotlib.pyplot as plt
 
+import preprocess_data
 # constants
-ROOT = "/home/aras/Desktop/commaAI/speed_challenge_2017"
-
+ROOT = "/home/aras/Desktop/commaAI"
 #train_frames = 20400
 #test_frames = 10798
-
 ###### DATASET #######
 class RGBOpticalFlowDataset(Dataset):
     """Face Landmarks dataset."""
 
-    def __init__(self, csv_file, root_dir=ROOT,
-                transform = transforms.Compose([transforms.ToTensor()])):
+    def __init__(self, dframe, transform = transforms.Compose([transforms.ToTensor()])):
         """
         Args:
             csv_file (string): Path to the csv file with annotations.
@@ -31,28 +29,64 @@ class RGBOpticalFlowDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
             on a sample.
         """
-
-        self.rgb_flow = pd.read_csv(os.path.join(root_dir,"rgb_flow",csv_file))
+        self.dframe = dframe
         self.root_dir = root_dir
         self.transforms = transform
 
     def __len__(self):
-        return len(self.rgb_flow)
+        return len(self.dframe)-1
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        img_name = os.path.join(self.root_dir,
-                                self.rgb_flow.iloc[idx]['image_path'])
-        image = io.imread(img_name)
-        speed = self.rgb_flow.iloc[idx]['speed']
+        id1 = self.dframe.index[idx]
+        id2 = id1 + 1
 
+        bright_factor = 0.2 + np.random.uniform()
+
+        x1, y1 = preprocess_image_from_path(self.dframe['image_path'][id1],
+                                            self.dframe['speed'][id1],
+                                            bright_factor)
+
+        # preprocess another image
+        x2, y2 = preprocess_image_from_path(self.dframe['image_path'][id2],
+                                            self.dframe['speed'][id2],
+                                            bright_factor)
+
+        # compute optical flow send in images as RGB
+        rgb_diff = opticalFlowDense(x1, x2)
+
+        # calculate mean speed
+        speed = np.mean([y1, y2])
 
         if self.transforms:
-            image = self.transforms(image)
+            rgb_diff = self.transforms(rgb_diff)
 
-        return image,speed
+        return rgb_diff,speed
+
+
+######DATALOADER Function#######
+
+def CustomLoader(root,csv_file, datatype):
+    if datatype == 'train':
+        train_data, valid_data = preprocess_data.train_valid_split(os.path.join(root,csv_file))
+
+        train_set = RGBOpticalFlowDataset(train_data)
+        valid_set = RGBOpticalFlowDataset(valid_data)
+
+        trainloader = DataLoader(train_set, batch_size= batch_size,num_workers=8)
+        validloader = DataLoader(valid_set, batch_size= batch_size)
+
+        return train_loader, valid_loader
+
+    else:
+        test_data = pd.read_csv(os.path.join(root,csv_file))
+        test_set = RGBOpticalFlowDataset(test_data)
+        test_loader = DataLoader(test_set, batch_size= batch_size)
+
+        return test_loader
+
 
 
 #######MODEL########
@@ -86,7 +120,6 @@ class NVidia(nn.Module):
         self.fc3 = nn.Linear(50, 10)
 
         self.out = nn.Linear(10, 1)
-
 
         if init_weights:
             self._initialize_weights()

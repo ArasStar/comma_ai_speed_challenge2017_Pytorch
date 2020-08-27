@@ -146,9 +146,12 @@ def video_to_frames(video_path, img_folder, dataset_type):
     return "done dataset_constructor--videos to frames"
 
 
-def my_train_valid_split(dframe, seed_val):
+def train_valid_split(dframe_loc, seed_val=1):
     """ shuffles and splits with the same ratio as Jovsa
     """
+    print("---Reading..")
+    dframe = pd.read_csv(dframe_loc)
+    
     print("---Shuffling..")
     shuffled = dframe.iloc[:-1].sample(n=len(dframe)-1 ,random_state=seed_val)
 
@@ -166,6 +169,7 @@ def my_train_valid_split(dframe, seed_val):
 
 
     print("len of paired df  ",len(paireddf))
+
     print("---Spliting...")
     split_idx = int(len(shuffled)*0.8)*2
 
@@ -176,7 +180,7 @@ def my_train_valid_split(dframe, seed_val):
     return train_data, valid_data
 
 
-def my_generate_training_data(data, batch_size = 32):
+def generate_training_data(data, batch_size = 32):
     image_batch = np.zeros((batch_size, 66, 220, 3)) # nvidia input params
     label_batch = np.zeros((batch_size))
     idx = 1
