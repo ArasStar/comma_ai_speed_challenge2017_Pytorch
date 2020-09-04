@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.gridspec as gridspec
 from sklearn.utils import shuffle
+from sklearn.metrics import mean_squared_error
 import skvideo.io
 from tqdm import tqdm
 import pandas as pd
@@ -13,8 +14,12 @@ import sys
 import os
 
 # constants
-ROOT = "/home/aras/Desktop/commaAI/speed_challenge_2017"
-
+# constants
+ROOT = "/home/aras/Desktop/commaAI"
+MODEL_DIR = "/home/aras/Desktop/commaAI/mycode/models"
+CLEAN_DATA_PATH = os.path.join(ROOT,"speed_challenge_2017/clean_data")
+CLEAN_IMGS_TRAIN = os.path.join(CLEAN_DATA_PATH ,'train_imgs')
+CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
 def change_brightness(image, bright_factor):
     """
     Augments the brightness of the image by multiplying the saturation by a uniform random variable
@@ -31,7 +36,7 @@ def change_brightness(image, bright_factor):
     return image_rgb
 
 
-def preprocess_image(image, crop=None):
+def preprocess_image(image):
     """
     preprocesses the image
 
@@ -44,23 +49,24 @@ def preprocess_image(image, crop=None):
              3) resize to (220, 66, 3) if not done so already from perspective transform
     """
     # Crop out sky (top) (100px) and black right part (-90px)
-    if crop=="more":
-        image_cropped = image[140:400, :-90] # -> (380, 550, 3)
-    else:
-        image_cropped = image[100:440, :-90] # -> (380, 550, 3) #original
+    image_cropped = image[100:440, :-90] # -> (380, 550, 3) #original
 
     image = cv2.resize(image_cropped, (220, 66), interpolation = cv2.INTER_AREA)
 
     return image
 
-def preprocess_image_from_path(image_path, speed, bright_factor=None,crop=False):
+def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode=True):
     img = cv2.imread(image_path)
+
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    if bright_factor is not None:
+
+    if train_mode and bright_factor is not None:
         img = change_brightness(img, bright_factor)
 
-    img = preprocess_image(img,crop=crop)
+    img = preprocess_image(img)
+
     return img, speed
+
 
 def opticalFlowDense(image_current, image_next):
     """
@@ -119,7 +125,7 @@ def video_to_frames(video_path, img_folder, dataset_type):
     '''
     takes the frames out of the video and creates a csv_file:
     '''
-    train_y = list(pd.read_csv(os.path.join(ROOT,"raw", 'train.txt'), header=None, squeeze=True))
+    train_y = list(pd.read_csv(os.path.join(ROOT, "raw", 'train.txt'), header=None, squeeze=True))
     meta_dict = {}
 
     #download video
@@ -145,94 +151,44 @@ def video_to_frames(video_path, img_folder, dataset_type):
 
     return "done dataset_constructor--videos to frames"
 
-
 def train_valid_split(dframe_loc, seed_val=1):
     """ shuffles and splits with the same ratio as Jovsa
     """
     print("---Reading..")
-    dframe = pd.read_csv(dframe_loc)
-    
-    print("---Shuffling..")
-    shuffled = dframe.iloc[:-1].sample(n=len(dframe)-1 ,random_state=seed_val)
+    lookup_df = pd.read_csv(dframe_loc)
+    dframe = lookup_df[:-1]
 
-    print('---Creating pairs succesive frames')
-    paireddf = pd.DataFrame()
-    for i in tqdm(range(len(shuffled))):
-        idx1 = shuffled.iloc[i].image_index
-        idx2 = idx1 + 1
+    print('shuffling')
+    trainN = int(len(dframe)*0.8)
+    validN = len(dframe) - trainN
+    datatype = ['train'] * trainN + ['valid']* validN
+    assert(len(datatype)==len(dframe))
 
-        row1 = dframe.iloc[[idx1]].reset_index()
-        row2 = dframe.iloc[[idx2]].reset_index()
+    datatype_col = pd.Series(datatype).sample(len(datatype),random_state=seed_val).values
+    dframe['datatype'] = datatype_col
+    dframe = dframe.sample(n=len(dframe),random_state=seed_val+2)
 
-        paired_frames = [paireddf, row1, row2]
-        paireddf = pd.concat(paired_frames, axis = 0, join = 'outer', ignore_index=False)
-
-
-    print("len of paired df  ",len(paireddf))
-
-    print("---Spliting...")
-    split_idx = int(len(shuffled)*0.8)*2
-
-    train_data = paireddf.iloc[:split_idx]
-    valid_data = paireddf.iloc[split_idx:]
     print("--done--")
 
-    return train_data, valid_data
+    return dframe ,lookup_df
 
 
-def generate_training_data(data, batch_size = 32):
-    image_batch = np.zeros((batch_size, 66, 220, 3)) # nvidia input params
-    label_batch = np.zeros((batch_size))
-    idx = 1
-    while True:
+def windowAvg(output_csv):
 
-        for i in range(batch_size):
-            if idx > len(data)-2:
-                idx = 1
+    test_meta = pd.read_csv(output_csv)
+    print('shape: ', test_meta.shape)
+    assert(test_meta.shape[0] == test_frames)
+    assert(test_meta.shape[1] == 3)
 
-            # Generate a random bright factor to apply to both image
-            bright_factor = 0.2 + np.random.uniform()
+    window_size = 25
+    test_meta['smooth_predicted_speed'] = pd.rolling_median(test_meta['predicted_speed'], window_size, center=True)
+    test_meta['smooth_error'] = test_meta.apply(lambda x: x['smooth_predicted_speed'] - x['speed'], axis=1)
 
-            row_now = data.iloc[[idx]].reset_index()
-            row_prev = data.iloc[[idx - 1]].reset_index()
-            row_next = data.iloc[[idx + 1]].reset_index()
+    test_meta['smooth_predicted_speed'] = test_meta.apply(lambda x:
+                                                        x['predicted_speed'] if np.isnan(x['smooth_predicted_speed'])
+                                                       else x['smooth_predicted_speed'],axis=1)
 
-            # Find the 3 respective times to determine frame order (current -> next)
-
-            time_now = row_now['image_index'].values[0]
-            time_prev = row_prev['image_index'].values[0]
-            time_next = row_next['image_index'].values[0]
-
-            if abs(time_now - time_prev) == 1 and time_now > time_prev:
-                row1 = row_prev
-                row2 = row_now
-
-            elif abs(time_next - time_now) == 1 and time_next > time_now:
-                row1 = row_now
-                row2 = row_next
-            else:
-                print('Error generating row-generate training data')
-
-            x1, y1 = preprocess_image_from_path(row1['image_path'].values[0],
-                                                row1['speed'].values[0],
-                                               bright_factor)
-
-            # preprocess another image
-            x2, y2 = preprocess_image_from_path(row2['image_path'].values[0],
-                                                row2['speed'].values[0],
-                                               bright_factor)
-
-            # compute optical flow send in images as RGB
-            rgb_diff = opticalFlowDense(x1, x2)
-
-            # calculate mean speed
-            y = np.mean([y1, y2])
-
-            image_batch[i] = rgb_diff
-            label_batch[i] = y
-
-            idx += 2
-
-        #print('image_batch', image_batch.shape, ' label_batch', label_batch)
-        # Shuffle the pairs before they get fed into the network
-        yield shuffle(image_batch, label_batch)
+    test_meta['smooth_error'] = test_meta.apply(lambda x: x['error'] if np.isnan(x['smooth_error'])
+                                                       else x['smooth_error'],axis=1)
+    output_file = test_meta['smooth_predicted_speed']
+    output_file.to_csv(os.path.join(ROOT,'mycode',test.txt),index=False)
