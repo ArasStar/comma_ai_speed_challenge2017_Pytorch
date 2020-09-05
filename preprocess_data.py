@@ -30,6 +30,7 @@ def change_brightness(image, bright_factor):
 
 def preprocess_image(image):
     """
+    
     preprocesses the image
 
     input: image (480 (y), 640 (x), 3) RGB
