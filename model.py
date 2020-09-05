@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 
 from preprocess_data import train_valid_split, preprocess_image_from_path, opticalFlowDense
 # constants
-ROOT = "/home/aras/Desktop/commaAI"
 #train_frames = 20400
 #test_frames = 10798
 
@@ -70,8 +69,7 @@ class RGBOpticalFlowDataset(Dataset):
         if  self.transforms:
             rgb_diff = self.transforms(rgb_diff)
 
-        return rgb_diff, speed
-
+        return rgb_diff, speed, id1
 
 ######DATALOADER Function#######
 
@@ -92,14 +90,13 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype):
     else:
         test_data = pd.read_csv(os.path.join(rootcsv, csv_file))
         test_data['datatype'] = 'test'
-        print("testdata_len", len(test_data))
+        print(rootcsv+"data_len(full data -no shuffle)", len(test_data))
         test_set = RGBOpticalFlowDataset('test', rootD, test_data.iloc[:-1],test_data)
 
         shape = tuple(test_set[0][0].shape)
         testloader = DataLoader(test_set, batch_size= batch_size, pin_memory=True, num_workers=8)
 
         return testloader, shape
-
 
 
 #######MODEL########

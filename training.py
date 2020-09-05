@@ -1,4 +1,3 @@
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -27,7 +26,7 @@ import torch.optim as optim
 from model import NVidia#nvidia model and the data loader
 from model import RGBOpticalFlowDataset
 from model import customloader
-
+from preprocess_data import windowAvg
 
 if torch.cuda.is_available():
     device = torch.device('cuda:0')
@@ -37,49 +36,58 @@ else:
     sys.exit()
 
 # constants
+project_folder_name='mycode'
 ROOT = "/home/aras/Desktop/commaAI"
-MODEL_DIR = os.path.join(ROOT,'mycode','models')
+MODEL_DIR = os.path.join(ROOT,project_folder_name,'models')
 CLEAN_DATA_PATH = os.path.join(ROOT,"speed_challenge_2017/clean_data")
 CLEAN_IMGS_TRAIN = os.path.join(CLEAN_DATA_PATH ,'train_imgs')
 CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
-#TESTING
-def make_predictions(model,data_csv):
-    print("loading data for prediction")
-    testloader, shape = customloader(CLEAN_DATA_PATH,ROOT, data_csv, batch_size =16, datatype="test")
 
+#TESTING
+def make_predictions(model,datatype, dataloader=None):
+    print("loading "+datatype if dataloader is None else 'valid'+" data for prediction")
+    #setting up the data you want to do predictions on
+    if dataloader is None:
+        index = pd.read_csv(os.path.join(CLEAN_DATA_PATH, datatype+'_meta.csv'))['image_index']
+        dataloader, shape = customloader(CLEAN_DATA_PATH,ROOT, datatype+'_meta.csv', batch_size =16, datatype="test")
+
+    #get either a Nvidia model object or path to the model.tar
     if isinstance(model,str):
         model_dict = torch.load(model)
         nvidia = NVidia(image_size=shape)
         nvidia.load_state_dict(model_dict["model_state_dict"])
         model = nvidia
+
     elif not isinstance(model,nn.Module):
         print("model needs to be either a path(str) or a nn.Module - parameter error terminating...")
         sys.exit()
 
     res = None
-    #model.cpu()
     model.to(device=device)
     model.eval()
+    criterion = nn.MSELoss().to(device=device)
     tqdm.write("making predictions...")
-    for _,(imgs,_) in tqdm(enumerate(testloader),total=len(testloader)):
+    for _,(imgs,speeds, idx) in tqdm(enumerate(dataloader),total=len(dataloader)):
         imgs = imgs.to(device=device)
-        outputs = model(imgs)
-        if res is None:
-            res = outputs.cpu().detach().numpy()
-        else:
-            res = np.concatenate((res,outputs.cpu().detach().numpy()), axis=0)
+        outputs = model(imgs).cpu().detach().numpy().squeeze()
 
-    res = np.concatenate((res,[res[-1]]), axis=0)
-    res = pd.DataFrame(res,columns=['predicted_speed'])
-    res['image_index'] = pd.read_csv(os.path.join(CLEAN_DATA_PATH,data_csv))['image_index']
-    res.to_csv(os.path.join(ROOT,'mycode','output.csv'))
+        outs = np.concatenate(([outputs],[speeds.numpy()], [idx.numpy()]),axis=0).T
+        res = np.concatenate((res,outs), axis=0) if res is not None else outs
 
+    if dataloader is None:
+        last_row = res[-1]
+        last_row[-1]+=1 # increasing index by 1
+        res = np.concatenate((res,[res[-1]]), axis=0)
 
-def eval(model,criterion, validloader):
+    res = pd.DataFrame(res,columns=['predicted_speed','speed','image_index'])
+    #res.to_csv(os.path.join(ROOT,project_folder_name,datatype+'_outputraw.csv'))
+    return res
+
+def eval(model, criterion, validloader):
     model.eval()
     running_loss = 0.0
     count=0
-    for images, speeds in enumerate(validloader):
+    for _, (images, speeds, _) in enumerate(validloader):
             images = images.to(device=device,dtype=torch.float)
             speeds = speeds.to(device=device,dtype=torch.float).view(-1,1)
             outputs = model(images)
@@ -87,7 +95,7 @@ def eval(model,criterion, validloader):
             count += len(images)
     model.train()
     avg_loss = running_loss/count
-    return avgloss
+    return avg_loss
 
 def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, batch_size=16, interval=1):
     # Setting data & model
@@ -111,8 +119,9 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title(title)
-        curve, = plt.plot([])
-        #ax.set_ylim(bottom=0, top=100)
+        curve_train, = plt.plot([])
+        curve_valid, = plt.plot([])
+        ax.set_ylim(bottom=0, top=200)
         #ax.set_xlim(left=-100, right=num_epoch*n_iter)
 
     start_time = time.time()
@@ -120,11 +129,14 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
     model.train()
     for epoch in range(num_epoch):
         if valid:
+            print('hooop')
             val_loss = eval(model,criterion, validloader)
+            print(f'validation loss in the begining of epoch {epoch+1} is: {val_loss}')
             valid_loss.append(val_loss)
+            curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
+            curve_valid.set_xdata(np.append(curve_valid.get_xdata(),(epoch*n_iter)+1))
 
-        for i, (images, speeds) in enumerate(trainloader):
-
+        for i, (images, speeds, _) in enumerate(trainloader):
             images = images.to(device=device, dtype=torch.float)
             speeds = speeds.to(device=device,dtype=torch.float).view(-1,1)
 
@@ -135,13 +147,13 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             optimizer.step()
 
             running_loss += loss.item()
-            if (epoch*n_iter + i )%interval==(interval-1):
+            if  i==0 or i %interval==(interval-1):
                 avgloss = running_loss/interval
                 print(f'epoch:{epoch+1}/{num_epoch}, {i+1}/{n_iter} loss: {avgloss}')
                 running_loss = 0.0
                 if plot:
-                    curve.set_ydata(np.append(curve.get_ydata(),avgloss))
-                    curve.set_xdata(np.append(curve.get_xdata(),(epoch*n_iter)+i+1))
+                    curve_train.set_ydata(np.append(curve_train.get_ydata(),avgloss))
+                    curve_train.set_xdata(np.append(curve_train.get_xdata(),(epoch*n_iter)+i+1))
                     ax.relim()
                     ax.autoscale_view(True,True,True)
                     ax.set_ylim(bottom=0)
@@ -151,8 +163,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         print(f'epoch {epoch+1} finished in {time.time()-epoch_start}')
         epoch_start = time.time()
 
-    print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes  ')
-
+    print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes ')
 
     #SAVE MODEL & PLOT
     if save_model:
@@ -165,8 +176,15 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
                 'val_train_losses':plotloss}, os.path.join(MODEL_DIR, modeltar))
 
     if test:
-        print("making prediction on test set")
-        make_predictions(model,'test_meta.csv')
+        print("final val_score =", eval(model,criterion,validloader))
+        print("making prediction on test set and evaluation on training set + valid set ")
+        output_raw_test = make_predictions(model,'test')
+        output_raw_trainfull = make_predictions(model,'train')
+        output_raw_valid = make_predictions(model,'valid',dataloader=validloader)
+
+        windowAvg(output_raw_test,'test')
+        windowAvg(output_raw_trainfull,'train')
+        windowAvg(output_raw_valid,'valid')
 
 def main(argv):
     def str2val(args):
@@ -192,6 +210,13 @@ def main(argv):
     if opts: str2val(opts)
     train(**dict(opts))
 
-
 if __name__ == "__main__":
     main(sys.argv[1:])
+
+
+
+
+
+
+
+#

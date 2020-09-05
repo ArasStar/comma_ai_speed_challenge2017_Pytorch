@@ -13,13 +13,6 @@ import h5py
 import sys
 import os
 
-# constants
-# constants
-ROOT = "/home/aras/Desktop/commaAI"
-MODEL_DIR = "/home/aras/Desktop/commaAI/mycode/models"
-CLEAN_DATA_PATH = os.path.join(ROOT,"speed_challenge_2017/clean_data")
-CLEAN_IMGS_TRAIN = os.path.join(CLEAN_DATA_PATH ,'train_imgs')
-CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
 def change_brightness(image, bright_factor):
     """
     Augments the brightness of the image by multiplying the saturation by a uniform random variable
@@ -34,7 +27,6 @@ def change_brightness(image, bright_factor):
     # change back to RGB
     image_rgb = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2RGB)
     return image_rgb
-
 
 def preprocess_image(image):
     """
@@ -66,7 +58,6 @@ def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode
     img = preprocess_image(img)
 
     return img, speed
-
 
 def opticalFlowDense(image_current, image_next):
     """
@@ -125,6 +116,8 @@ def video_to_frames(video_path, img_folder, dataset_type):
     '''
     takes the frames out of the video and creates a csv_file:
     '''
+
+    ROOT = "/home/aras/Desktop/commaAI"
     train_y = list(pd.read_csv(os.path.join(ROOT, "raw", 'train.txt'), header=None, squeeze=True))
     meta_dict = {}
 
@@ -134,7 +127,6 @@ def video_to_frames(video_path, img_folder, dataset_type):
     tot_frames = cap.getShape()[0]
     cap.close()
     cap = skvideo.io.vreader(video_path)
-
 
     tqdm.write('constructing dataset...')
     for idx, frame in enumerate(tqdm(cap,total=tot_frames)):
@@ -172,23 +164,51 @@ def train_valid_split(dframe_loc, seed_val=1):
 
     return dframe ,lookup_df
 
-
-def windowAvg(output_csv):
-
-    test_meta = pd.read_csv(output_csv)
-    print('shape: ', test_meta.shape)
-    assert(test_meta.shape[0] == test_frames)
-    assert(test_meta.shape[1] == 3)
+def windowAvg(dframe,datatype):
 
     window_size = 25
-    test_meta['smooth_predicted_speed'] = pd.rolling_median(test_meta['predicted_speed'], window_size, center=True)
-    test_meta['smooth_error'] = test_meta.apply(lambda x: x['smooth_predicted_speed'] - x['speed'], axis=1)
+    #dframe = pd.read_csv(os.path.join(__file__[:__file__.rfind('/')],csv_file))
+    print(datatype+'_meta shape: ', dframe.shape, dframe.columns)
 
-    test_meta['smooth_predicted_speed'] = test_meta.apply(lambda x:
-                                                        x['predicted_speed'] if np.isnan(x['smooth_predicted_speed'])
-                                                       else x['smooth_predicted_speed'],axis=1)
+    dframe['smooth_predicted_speed'] = dframe['predicted_speed'].rolling(window_size, center=True).median()
 
-    test_meta['smooth_error'] = test_meta.apply(lambda x: x['error'] if np.isnan(x['smooth_error'])
-                                                       else x['smooth_error'],axis=1)
-    output_file = test_meta['smooth_predicted_speed']
-    output_file.to_csv(os.path.join(ROOT,'mycode',test.txt),index=False)
+    dframe['smooth_predicted_speed'] = dframe.apply(lambda x: x['predicted_speed'] if np.isnan(x['smooth_predicted_speed'])
+                                                                                         else x['smooth_predicted_speed'],axis=1)
+
+    output_file = dframe['smooth_predicted_speed']
+    print("saving the .txt in to the same folder that the script runs")
+    output_file.to_csv(os.path.join(__file__[:__file__.rfind('/')], datatype+'output.txt'),index=False)
+
+    fig, ax = plt.subplots(figsize=(20,10))
+    plt.xlabel('image_index (or time since start)')
+    plt.ylabel('speed')
+    plt.title('Predicted on '+datatype+' data')
+
+    if datatype == 'test':
+
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
+        plt.legend(['predicted speed', 'smooth predicted speed'], loc='upper right')
+
+    elif datatype == 'valid':
+
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['speed']], 'go')
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
+        plt.legend(['validation speed', 'predicted speed'], loc='upper right')
+
+    elif datatype == 'train':
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
+        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
+                 dframe.sort_values(['image_index'])[['speed']], 'r.')
+
+        plt.legend(['predicted speed', 'smooth predicted speed','ground truth'], loc='upper right')
+
+    plt.show()
+    plt.close()
