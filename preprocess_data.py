@@ -30,7 +30,7 @@ def change_brightness(image, bright_factor):
 
 def preprocess_image(image):
     """
-    
+
     preprocesses the image
 
     input: image (480 (y), 640 (x), 3) RGB
@@ -42,13 +42,16 @@ def preprocess_image(image):
              3) resize to (220, 66, 3) if not done so already from perspective transform
     """
     # Crop out sky (top) (100px) and black right part (-90px)
-    image_cropped = image[100:440, :-90] # -> (380, 550, 3) #original
+    if kitti:
+        img = img[50:, 150:-150] # -> (380, 550, 3) #original
+    else:
+        image_cropped = image[100:440, :-90] # -> (380, 550, 3) #original
 
     image = cv2.resize(image_cropped, (220, 66), interpolation = cv2.INTER_AREA)
 
     return image
 
-def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode=True):
+def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode=True, kitti=False):
     img = cv2.imread(image_path)
 
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -56,7 +59,7 @@ def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode
     if train_mode and bright_factor is not None:
         img = change_brightness(img, bright_factor)
 
-    img = preprocess_image(img)
+    img = preprocess_image(img,kitti)
 
     return img, speed
 
@@ -165,6 +168,30 @@ def train_valid_split(dframe_loc, seed_val=1):
 
     return dframe ,lookup_df
 
+def train_valid_split_kitti(dframe_loc, seed_val=1):
+    """ shuffles and splits each sequence equally
+    """
+    print("---Reading..)
+    #group by shuffle and split each seq separetly concat them givem them test train shit do -1 from each for lookup_df
+    lookup_df = pd.read_csv(dframe_loc)
+    dframe = pd.dataframe()
+
+    print('shuffling')
+    for g_id, g in lookup_df.groupby('sequence_name'):
+        g_df = g[:-1]
+        trainN = int(len(g_df)*0.8)
+        validN = len(g_df) - trainN
+        datatype = ['train'] * trainN + ['valid']* validN
+        assert(len(datatype)==len(g_df))
+        datatype_col = pd.Series(datatype).sample(len(datatype),random_state=seed_val).values
+        g_df['datatype'] = datatype_col
+        dframe = pd.concat([dframe,g_df])
+
+    dframe = dframe.sample(n=len(dframe), random_state=seed_val+2)
+    print("--done--")
+
+    return dframe.reset_index() ,lookup_df
+
 def windowAvg(dframe,datatype):
 
     window_size = 25
@@ -177,16 +204,19 @@ def windowAvg(dframe,datatype):
                                                                                          else x['smooth_predicted_speed'],axis=1)
 
     output_file = dframe['smooth_predicted_speed']
+
     print("saving the .txt in to the same folder that the script runs")
     output_file.to_csv(os.path.join(__file__[:__file__.rfind('/')], datatype+'output.txt'),index=False)
 
     fig, ax = plt.subplots(figsize=(20,10))
     plt.xlabel('image_index (or time since start)')
     plt.ylabel('speed')
-    plt.title('Predicted on '+datatype+' data')
+
+    mse_scores = " -MSE:" + mean_squared_error(dframe["speed"], dframe["predicted_speed"]) +
+                 "-MSE(smooth):"+ mean_squared_error(dframe["speed"], dframe["smoot_predicted_speed"]) if datatype != 'test' else ""
+    plt.title('Predicted on '+datatype+' data'+ (mse_scores if datatype != 'test' else '')
 
     if datatype == 'test':
-
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
                  dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
@@ -194,7 +224,6 @@ def windowAvg(dframe,datatype):
         plt.legend(['predicted speed', 'smooth predicted speed'], loc='upper right')
 
     elif datatype == 'valid':
-
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
                  dframe.sort_values(['image_index'])[['speed']], 'go')
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
@@ -208,7 +237,6 @@ def windowAvg(dframe,datatype):
                  dframe.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
                  dframe.sort_values(['image_index'])[['speed']], 'r.')
-
         plt.legend(['predicted speed', 'smooth predicted speed','ground truth'], loc='upper right')
 
     plt.show()

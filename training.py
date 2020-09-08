@@ -1,6 +1,5 @@
 import warnings
 warnings.filterwarnings("ignore")
-
 import numpy as np
 import cv2
 import os
@@ -15,7 +14,6 @@ import pandas as pd
 import h5py
 import sys
 import getopt
-
 import torch
 import torch.nn as nn
 import torchvision
@@ -45,11 +43,11 @@ CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
 
 #TESTING
 def make_predictions(model,datatype, dataloader=None):
-    print("loading "+datatype if dataloader is None else 'valid'+" data for prediction")
+    print("loading "+ (datatype if dataloader is None else 'valid')+" data for prediction")
     #setting up the data you want to do predictions on
     if dataloader is None:
         index = pd.read_csv(os.path.join(CLEAN_DATA_PATH, datatype+'_meta.csv'))['image_index']
-        dataloader, shape = customloader(CLEAN_DATA_PATH,ROOT, datatype+'_meta.csv', batch_size =16, datatype="test")
+        dataloader, shape = customloader(CLEAN_DATA_PATH,ROOT, datatype+'_meta.csv', batch_size =16, datatype="test",kitti=kitti)
 
     #get either a Nvidia model object or path to the model.tar
     if isinstance(model,str):
@@ -57,7 +55,6 @@ def make_predictions(model,datatype, dataloader=None):
         nvidia = NVidia(image_size=shape)
         nvidia.load_state_dict(model_dict["model_state_dict"])
         model = nvidia
-
     elif not isinstance(model,nn.Module):
         print("model needs to be either a path(str) or a nn.Module - parameter error terminating...")
         sys.exit()
@@ -67,7 +64,7 @@ def make_predictions(model,datatype, dataloader=None):
     model.eval()
     criterion = nn.MSELoss().to(device=device)
     tqdm.write("making predictions...")
-    for _,(imgs,speeds, idx) in tqdm(enumerate(dataloader),total=len(dataloader)):
+    for _,(imgs,speeds, idx, seq_name) in tqdm(enumerate(dataloader),total=len(dataloader)):
         imgs = imgs.to(device=device)
         outputs = model(imgs).cpu().detach().numpy().squeeze()
 
@@ -86,31 +83,25 @@ def make_predictions(model,datatype, dataloader=None):
 def eval(model, criterion, validloader):
     model.eval()
     running_loss = 0.0
-    count=0
-    for _, (images, speeds, _) in enumerate(validloader):
+    count = len(validloader)
+    for _, (images, speeds, _, _) in enumerate(validloader):
             images = images.to(device=device,dtype=torch.float)
             speeds = speeds.to(device=device,dtype=torch.float).view(-1,1)
             outputs = model(images)
             running_loss += criterion(outputs,speeds).item()
-            count += len(images)
     model.train()
     avg_loss = running_loss/count
     return avg_loss
 
-def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, batch_size=16, interval=1):
+def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, batch_size=16, interval=1, steps_per_epoch=None, kitti=False):
     # Setting data & model
-    trainloader, validloader, shapeImage = customloader(CLEAN_DATA_PATH,ROOT, "train_meta.csv", batch_size=16, datatype="train")
+    trainloader, validloader, shapeImage = customloader(CLEAN_DATA_PATH, ROOT, "train_meta.csv", batch_size=16, datatype="train",kitti=kitti)
 
     model= NVidia(image_size=shapeImage).to(device=device)
-
     criterion = nn.MSELoss().to(device=device)
     optimizer = optim.Adam(model.parameters(),lr=1e-4)
 
-    plotloss = []
-    valid_loss = []
-    n_iter = len(trainloader)
-    running_loss=0.0
-
+    n_iter = len(trainloader) if steps_per_epoch is None else steps_per_epoch
     print("# of trainable params: ", sum(p.numel() for p in model.parameters()))
     print('N of iteration', n_iter*num_epoch)
 
@@ -121,7 +112,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         ax.set_title(title)
         curve_train, = plt.plot([])
         curve_valid, = plt.plot([])
-        ax.set_ylim(bottom=0, top=200)
+        ax.set_ylim(bottom=0, top=50)
         #ax.set_xlim(left=-100, right=num_epoch*n_iter)
 
     start_time = time.time()
@@ -129,10 +120,8 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
     model.train()
     for epoch in range(num_epoch):
         if valid:
-            print('hooop')
             val_loss = eval(model,criterion, validloader)
-            print(f'validation loss in the begining of epoch {epoch+1} is: {val_loss}')
-            valid_loss.append(val_loss)
+            print(f'VALIDATION loss before starting epoch {epoch+1} is: {val_loss}')
             curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
             curve_valid.set_xdata(np.append(curve_valid.get_xdata(),(epoch*n_iter)+1))
 
@@ -146,19 +135,19 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
             if  i==0 or i %interval==(interval-1):
-                avgloss = running_loss/interval
-                print(f'epoch:{epoch+1}/{num_epoch}, {i+1}/{n_iter} loss: {avgloss}')
-                running_loss = 0.0
+                print(f'epoch:{epoch+1}/{num_epoch}, {i+1}/{n_iter} loss: {loss.item()}')
+
                 if plot:
-                    curve_train.set_ydata(np.append(curve_train.get_ydata(),avgloss))
+                    curve_train.set_ydata(np.append(curve_train.get_ydata(),loss.item()))
                     curve_train.set_xdata(np.append(curve_train.get_xdata(),(epoch*n_iter)+i+1))
                     ax.relim()
                     ax.autoscale_view(True,True,True)
-                    ax.set_ylim(bottom=0)
+                    #ax.set_ylim(bottom=0)
                     plt.draw()
                     plt.pause(0.0001)
+
+            if steps_per_epoch is not None and i>steps_per_epoch: break
 
         print(f'epoch {epoch+1} finished in {time.time()-epoch_start}')
         epoch_start = time.time()
@@ -172,19 +161,16 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         modeltar= "batch"+str(batch_size)+"_epoch"+str(num_epoch)+".tar"
         torch.save({'epoch':num_epoch,
                 'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_train_losses':plotloss}, os.path.join(MODEL_DIR, modeltar))
+                'optimizer_state_dict': optimizer.state_dict()},
+                os.path.join(MODEL_DIR, modeltar))
 
     if test:
         print("final val_score =", eval(model,criterion,validloader))
-        print("making prediction on test set and evaluation on training set + valid set ")
-        output_raw_test = make_predictions(model,'test')
-        output_raw_trainfull = make_predictions(model,'train')
-        output_raw_valid = make_predictions(model,'valid',dataloader=validloader)
+        print("making prediction on test set and evaluation on training+valid(train_full) set a valid set ")
 
-        windowAvg(output_raw_test,'test')
-        windowAvg(output_raw_trainfull,'train')
-        windowAvg(output_raw_valid,'valid')
+        windowAvg(make_predictions(model,'test'),'test')
+        windowAvg(make_predictions(model,'train'),'train')
+        windowAvg(make_predictions(model,'valid',dataloader=validloader),'valid')
 
 def main(argv):
     def str2val(args):
@@ -197,7 +183,7 @@ def main(argv):
                 else:
                     print("ERRRRROR ARGUMENT PARSING:", name,strval)
 
-            elif name in ["num_epoch","batch_size","interval"]:
+            elif name in ["num_epoch","batch_size","interval","steps_per_epoch"]:
                 if strval.isdigit():
                     args[idx]=(name,int(strval))
                 else:
@@ -205,14 +191,13 @@ def main(argv):
             else:
                 print("ERRRRROR ARGUMENT PARSING:", name,strval)
 
-    opts, args = getopt.getopt(argv,"",["valid=","test=","plot=","save_model=","num_epoch=","batch_size=","interval="])
+    opts, args = getopt.getopt(argv,"",["valid=","test=","plot=","save_model=","num_epoch=","batch_size=","interval=","steps_per_epoch="])
     opts = [(name[2:],val) for name, val in opts]
     if opts: str2val(opts)
     train(**dict(opts))
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-
 
 
 

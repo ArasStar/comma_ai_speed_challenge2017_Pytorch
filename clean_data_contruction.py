@@ -10,7 +10,6 @@ import ffmpeg
 #from tqdm.notebook import tqdm # for notebook
 #%matplotlib inline
 
-
 # constants
 DATA_PATH = "/home/aras/Desktop/commaAI/speed_challenge_2017/data"
 TRAIN_VIDEO = os.path.join(DATA_PATH, 'train.mp4')
