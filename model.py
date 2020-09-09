@@ -42,11 +42,17 @@ class RGBOpticalFlowDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        '''
         id1 = self.dframe.index[idx]
         id2 = id1 + 1
-
         row1 = self.lookup_df.iloc[[id1]]
         row2 = self.lookup_df.iloc[[id2]]
+        '''
+        row1 = self.dframe.iloc[idx]
+        seq_name,id1 = row1[['sequence_name', 'image_index']]
+        id2 = id1 + 1
+
+        row2 = self.lookup_df.loc[(seq_name, id_2)]
 
         bright_factor = 0.2 + np.random.uniform()
 
@@ -68,7 +74,7 @@ class RGBOpticalFlowDataset(Dataset):
         if  self.transforms:
             rgb_diff = self.transforms(rgb_diff)
 
-        return rgb_diff, speed, id1, seq_name,row1['sequence_name']
+        return rgb_diff, speed, id1, seq_name
 
 
 ######DATALOADER Function#######
@@ -76,6 +82,7 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
 
     if datatype == 'train':
         dframe, lookup_df = train_valid_split(os.path.join(rootcsv,csv_file))
+        lookup_df.set_index(['sequence_name','image_index'], inplace=True).sort_index()
 
         train_set = RGBOpticalFlowDataset('train', rootD, dframe, lookup_df)
         valid_set = RGBOpticalFlowDataset('valid', rootD, dframe, lookup_df)
@@ -83,6 +90,8 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
 
         if kitti: #if kitti is mixed than we combine datasets
             dframe_kitti, lookup_df_kitti = train_valid_split_kitti(os.path.join(CLEAN_KITTI_DATA_PATH,'train_meta.csv'))
+            lookup_df_kitti.set_index(['sequence_name','image_index'], inplace=True).sort_index()
+
             train_set_kitti = RGBOpticalFlowDataset('train', rootD, dframe_kitti, lookup_df_kitti, kitti=True)
             valid_set_kitti = RGBOpticalFlowDataset('valid', rootD, dframe_kitti, lookup_df_kitti, kitti=True)
             assert(shape == tuple(train_set_kitti[0][0].shape) )
@@ -97,11 +106,15 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
 
     else:
         test_data = pd.read_csv(os.path.join(rootcsv, csv_file))
+        test_data.set_index(['sequence_name','image_index'], inplace=True).sort_index()
+
         test_set = RGBOpticalFlowDataset('test', rootD, test_data.iloc[:-1],test_data)
         shape = tuple(test_set[0][0].shape)
 
         if kitti:
             lookup_df_kitti = pd.read_csv(os.path.join(CLEAN_KITTI_DATA_PATH,'train_meta.csv'))
+            lookup_df_kitti.set_index(['sequence_name','image_index'], inplace=True).sort_index()
+
             test_data_kitti = pd.concat([g[:-1] for g_id, g in lookup_df_kitti.groupby('sequence_name') ])
             test_set_kitti = RGBOpticalFlowDataset('test', rootD, test_data_kitti,lookup_df_kitti)
             assert(shape == tuple(test_set_kitti[0][0].shape) )

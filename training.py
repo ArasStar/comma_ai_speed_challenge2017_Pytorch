@@ -63,21 +63,22 @@ def make_predictions(model,datatype, dataloader=None):
     model.to(device=device)
     model.eval()
     criterion = nn.MSELoss().to(device=device)
-    tqdm.write("making predictions...")
+    tqdm.write("making predictions for" + datatype + ' set ...')
     for _,(imgs,speeds, idx, seq_name) in tqdm(enumerate(dataloader),total=len(dataloader)):
         imgs = imgs.to(device=device)
         outputs = model(imgs).cpu().detach().numpy().squeeze()
 
-        outs = np.concatenate(([outputs],[speeds.numpy()], [idx.numpy()]),axis=0).T
+        outs = np.concatenate(([outputs],[speeds.numpy()], [idx.numpy()],[seq_name]),axis=0).T
         res = np.concatenate((res,outs), axis=0) if res is not None else outs
 
-    if dataloader is None:
-        last_row = res[-1]
-        last_row[-1]+=1 # increasing index by 1
-        res = np.concatenate((res,[res[-1]]), axis=0)
+    res = pd.DataFrame(res,columns=['predicted_speed', 'speed', 'image_index', 'sequence_name'])
 
-    res = pd.DataFrame(res,columns=['predicted_speed','speed','image_index'])
-    #res.to_csv(os.path.join(ROOT,project_folder_name,datatype+'_outputraw.csv'))
+    if dataloader is None: #KITTTTI more adjustments has to be made groupby
+        for seq_name, g in lookup_df_kitti.groupby('sequence_name'):
+            last_row = g[(seq_name, len(g)-1)]
+            last_row['image_index'] += 1
+            pd.concat([res,[last_row]])
+
     return res
 
 def eval(model, criterion, validloader):
@@ -95,7 +96,7 @@ def eval(model, criterion, validloader):
 
 def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, batch_size=16, interval=1, steps_per_epoch=None, kitti=False):
     # Setting data & model
-    trainloader, validloader, shapeImage = customloader(CLEAN_DATA_PATH, ROOT, "train_meta.csv", batch_size=16, datatype="train",kitti=kitti)
+    trainloader, validloader, shapeImage = customloader(CLEAN_DATA_PATH, ROOT, "train_meta.csv", batch_size=16, datatype="train", kitti=kitti)
 
     model= NVidia(image_size=shapeImage).to(device=device)
     criterion = nn.MSELoss().to(device=device)
@@ -152,7 +153,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         print(f'epoch {epoch+1} finished in {time.time()-epoch_start}')
         epoch_start = time.time()
 
-    print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes ')
+    print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes')
 
     #SAVE MODEL & PLOT
     if save_model:
@@ -165,7 +166,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
                 os.path.join(MODEL_DIR, modeltar))
 
     if test:
-        print("final val_score =", eval(model,criterion,validloader))
+        print("final validation score =", eval(model,criterion,validloader))
         print("making prediction on test set and evaluation on training+valid(train_full) set a valid set ")
 
         windowAvg(make_predictions(model,'test'),'test')

@@ -171,7 +171,7 @@ def train_valid_split(dframe_loc, seed_val=1):
 def train_valid_split_kitti(dframe_loc, seed_val=1):
     """ shuffles and splits each sequence equally
     """
-    print("---Reading..)
+    print("---Reading..")
     #group by shuffle and split each seq separetly concat them givem them test train shit do -1 from each for lookup_df
     lookup_df = pd.read_csv(dframe_loc)
     dframe = pd.dataframe()
@@ -212,9 +212,12 @@ def windowAvg(dframe,datatype):
     plt.xlabel('image_index (or time since start)')
     plt.ylabel('speed')
 
-    mse_scores = " -MSE:" + mean_squared_error(dframe["speed"], dframe["predicted_speed"]) +
-                 "-MSE(smooth):"+ mean_squared_error(dframe["speed"], dframe["smoot_predicted_speed"]) if datatype != 'test' else ""
-    plt.title('Predicted on '+datatype+' data'+ (mse_scores if datatype != 'test' else '')
+    mse_scores = (" -MSE:" + mean_squared_error(dframe["speed"], dframe["predicted_speed"]) + \
+                 "-MSE(smooth):" + mean_squared_error(dframe["speed"], dframe["smoot_predicted_speed"])) if datatype != 'test' else ""
+
+    plt.title('Predicted on '+datatype+' data'+ (mse_scores if datatype != 'test' else ''))
+    print('hooop multiline worked')
+    sys.exit()
 
     if datatype == 'test':
         plt.plot(dframe.sort_values(['image_index'])[['image_index']],
@@ -231,13 +234,16 @@ def windowAvg(dframe,datatype):
         plt.legend(['validation speed', 'predicted speed'], loc='upper right')
 
     elif datatype == 'train':
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['speed']], 'r.')
-        plt.legend(['predicted speed', 'smooth predicted speed','ground truth'], loc='upper right')
+
+        for seq_name, g in dframe.groupby('sequence_name'):
+
+            plt.plot(g.sort_values(['image_index'])[['image_index']],
+                     g.sort_values(['image_index'])[['predicted_speed']], 'bx')
+            plt.plot(g.sort_values(['image_index'])[['image_index']],
+                     g.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
+            plt.plot(g.sort_values(['image_index'])[['image_index']],
+                     g.sort_values(['image_index'])[['speed']], 'r.')
+            plt.legend(['predicted speed', 'smooth predicted speed','ground truth'], loc='upper right')
 
     plt.show()
     plt.close()
