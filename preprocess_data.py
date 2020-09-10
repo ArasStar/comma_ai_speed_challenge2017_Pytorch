@@ -28,7 +28,7 @@ def change_brightness(image, bright_factor):
     image_rgb = cv2.cvtColor(hsv_image, cv2.COLOR_HSV2RGB)
     return image_rgb
 
-def preprocess_image(image):
+def preprocess_image(image,kitti):
     """
 
     preprocesses the image
@@ -43,7 +43,7 @@ def preprocess_image(image):
     """
     # Crop out sky (top) (100px) and black right part (-90px)
     if kitti:
-        img = img[50:, 150:-150] # -> (380, 550, 3) #original
+        image_cropped = image[50:, 150:-150] # -> (380, 550, 3) #original
     else:
         image_cropped = image[100:440, :-90] # -> (380, 550, 3) #original
 
@@ -53,7 +53,6 @@ def preprocess_image(image):
 
 def preprocess_image_from_path(image_path, speed, bright_factor=None, train_mode=True, kitti=False):
     img = cv2.imread(image_path)
-
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     if train_mode and bright_factor is not None:
@@ -174,7 +173,7 @@ def train_valid_split_kitti(dframe_loc, seed_val=1):
     print("---Reading..")
     #group by shuffle and split each seq separetly concat them givem them test train shit do -1 from each for lookup_df
     lookup_df = pd.read_csv(dframe_loc)
-    dframe = pd.dataframe()
+    dframe = pd.DataFrame()
 
     print('shuffling')
     for g_id, g in lookup_df.groupby('sequence_name'):
@@ -195,55 +194,52 @@ def train_valid_split_kitti(dframe_loc, seed_val=1):
 def windowAvg(dframe,datatype):
 
     window_size = 25
+    print(datatype+' data shape: ', dframe.shape, dframe.columns)
+
     #dframe = pd.read_csv(os.path.join(__file__[:__file__.rfind('/')],csv_file))
-    print(datatype+'_meta shape: ', dframe.shape, dframe.columns)
+    for seq_name, seq_df in dframe.groupby('sequence_name'):
+        seq_df = seq_df.sort_values(['image_index'])
+        print(seq_df.head())
+        seq_df['smooth_predicted_speed'] = seq_df['predicted_speed'].rolling(window_size, center=True).median()
 
-    dframe['smooth_predicted_speed'] = dframe['predicted_speed'].rolling(window_size, center=True).median()
+        seq_df['smooth_predicted_speed'] = seq_df.apply(lambda x: x['predicted_speed'] if np.isnan(x['smooth_predicted_speed'])
+                                                                                             else x['smooth_predicted_speed'],axis=1)
 
-    dframe['smooth_predicted_speed'] = dframe.apply(lambda x: x['predicted_speed'] if np.isnan(x['smooth_predicted_speed'])
-                                                                                         else x['smooth_predicted_speed'],axis=1)
+        fig, ax = plt.subplots(figsize=(20,10))
+        plt.xlabel('image_index (or time since start)')
+        plt.ylabel('speed')
+        if datatype == 'test':
+            print("saving the .txt in to the same folder that the script runs")
+            output_file = seq_df['smooth_predicted_speed']
+            output_file.to_csv(os.path.join(__file__[:__file__.rfind('/')], datatype + '_output.txt'),index=False)
 
-    output_file = dframe['smooth_predicted_speed']
+            plt.title('Predictions on '+datatype+' data')
+            plt.plot(seq_df[['image_index']], seq_df[['predicted_speed']], 'bx')
+            plt.plot(seq_df[['image_index']], seq_df[['smooth_predicted_speed']], 'g.')
+            plt.legend(['predicted speed', 'smooth predicted speed'], loc='upper right')
 
-    print("saving the .txt in to the same folder that the script runs")
-    output_file.to_csv(os.path.join(__file__[:__file__.rfind('/')], datatype+'output.txt'),index=False)
+        elif datatype == 'valid':
 
-    fig, ax = plt.subplots(figsize=(20,10))
-    plt.xlabel('image_index (or time since start)')
-    plt.ylabel('speed')
+            mse_scores = " -MSE:" + str(mean_squared_error(seq_df["speed"], seq_df["predicted_speed"])) + \
+                         "-MSE(smooth):" + str(mean_squared_error(seq_df["speed"], seq_df["smooth_predicted_speed"]))
 
-    mse_scores = (" -MSE:" + mean_squared_error(dframe["speed"], dframe["predicted_speed"]) + \
-                 "-MSE(smooth):" + mean_squared_error(dframe["speed"], dframe["smoot_predicted_speed"])) if datatype != 'test' else ""
+            plt.title('Predictions on '+datatype+' data - sequence :' + seq_name + mse_scores)
 
-    plt.title('Predicted on '+datatype+' data'+ (mse_scores if datatype != 'test' else ''))
-    print('hooop multiline worked')
-    sys.exit()
+            plt.plot(seq_df[['image_index']], seq_df[['speed']], 'go')
+            plt.plot(seq_df[['image_index']], seq_df[['predicted_speed']], 'bx')
+            plt.legend(['validation speed', 'predicted speed'], loc='upper right')
 
-    if datatype == 'test':
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
-        plt.legend(['predicted speed', 'smooth predicted speed'], loc='upper right')
+        elif datatype == 'train':
 
-    elif datatype == 'valid':
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['speed']], 'go')
-        plt.plot(dframe.sort_values(['image_index'])[['image_index']],
-                 dframe.sort_values(['image_index'])[['predicted_speed']], 'bx')
-        plt.legend(['validation speed', 'predicted speed'], loc='upper right')
 
-    elif datatype == 'train':
+            mse_scores = " -MSE:" + str(mean_squared_error(seq_df["speed"], seq_df["predicted_speed"])) + \
+                         "-MSE(smooth):" + str(mean_squared_error(seq_df["speed"], seq_df["smooth_predicted_speed"]))
+            plt.title('Predictions on '+datatype+' data - sequence :' + seq_name )
 
-        for seq_name, g in dframe.groupby('sequence_name'):
-
-            plt.plot(g.sort_values(['image_index'])[['image_index']],
-                     g.sort_values(['image_index'])[['predicted_speed']], 'bx')
-            plt.plot(g.sort_values(['image_index'])[['image_index']],
-                     g.sort_values(['image_index'])[['smooth_predicted_speed']], 'g.')
-            plt.plot(g.sort_values(['image_index'])[['image_index']],
-                     g.sort_values(['image_index'])[['speed']], 'r.')
+            plt.plot(seq_df[['image_index']], seq_df[['predicted_speed']], 'bx')
+            plt.plot(seq_df[['image_index']], seq_df[['smooth_predicted_speed']], 'g.')
+            plt.plot(seq_df[['image_index']], seq_df[['speed']], 'r.')
             plt.legend(['predicted speed', 'smooth predicted speed','ground truth'], loc='upper right')
 
-    plt.show()
-    plt.close()
+        plt.show()
+        plt.close()

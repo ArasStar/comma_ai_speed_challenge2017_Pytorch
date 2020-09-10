@@ -36,7 +36,7 @@ for i, file in enumerate(seqs_list):
     #iterating through sequence
     for sample_file_name in tqdm(seq_list,total=n_seq):
         idx = int(sample_file_name.split('.')[-2])
-        img_path = os.path.join('kitti_dataset/clean_data/train_imgs',file,sample_file_name.split('.')[-2]+'.png')
+        img_path = os.path.join('kitti_dataset/clean_data/train_imgs', file, 'image_03/data', sample_file_name.split('.')[-2]+'.png')
 
         label_path =   os.path.join(highres_labels, sample_file_name)
         label_df = pd.read_csv(label_path,sep = " ", header=None)

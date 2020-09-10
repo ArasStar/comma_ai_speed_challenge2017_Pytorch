@@ -42,44 +42,44 @@ CLEAN_IMGS_TRAIN = os.path.join(CLEAN_DATA_PATH ,'train_imgs')
 CLEAN_IMGS_TEST = os.path.join(CLEAN_DATA_PATH ,'test_imgs')
 
 #TESTING
-def make_predictions(model,datatype, dataloader=None):
+def make_predictions(model, datatype, dataloader=None, kitti=False):
     print("loading "+ (datatype if dataloader is None else 'valid')+" data for prediction")
     #setting up the data you want to do predictions on
     if dataloader is None:
-        index = pd.read_csv(os.path.join(CLEAN_DATA_PATH, datatype+'_meta.csv'))['image_index']
-        dataloader, shape = customloader(CLEAN_DATA_PATH,ROOT, datatype+'_meta.csv', batch_size =16, datatype="test",kitti=kitti)
+        index = pd.read_csv(os.path.join(CLEAN_DATA_PATH, datatype + '_meta.csv'))['image_index']
+        loader, shape = customloader(CLEAN_DATA_PATH, ROOT, datatype + '_meta.csv', batch_size =1, datatype="test", kitti=kitti)
+    else:
+        loader = dataloader
 
     #get either a Nvidia model object or path to the model.tar
     if isinstance(model,str):
         model_dict = torch.load(model)
-        nvidia = NVidia(image_size=shape)
+        nvidia = NVidia()
         nvidia.load_state_dict(model_dict["model_state_dict"])
         model = nvidia
     elif not isinstance(model,nn.Module):
         print("model needs to be either a path(str) or a nn.Module - parameter error terminating...")
         sys.exit()
 
-    res = None
+    res = {}
     model.to(device=device)
     model.eval()
-    criterion = nn.MSELoss().to(device=device)
-    tqdm.write("making predictions for" + datatype + ' set ...')
-    for _,(imgs,speeds, idx, seq_name) in tqdm(enumerate(dataloader),total=len(dataloader)):
-        imgs = imgs.to(device=device)
-        outputs = model(imgs).cpu().detach().numpy().squeeze()
+    tqdm.write("making predictions for " + datatype + ' set ...')
+    for row_i,(img,speed, idx, seq_name) in tqdm(enumerate(loader),total=len(loader)):
+        img = img.to(device=device)
+        predicted_speed = model(img).cpu().detach()
+        res[row_i] = [predicted_speed.item(), speed.item(), idx.item(), seq_name[0]]
 
-        outs = np.concatenate(([outputs],[speeds.numpy()], [idx.numpy()],[seq_name]),axis=0).T
-        res = np.concatenate((res,outs), axis=0) if res is not None else outs
+    res = pd.DataFrame.from_dict(res, orient="index", columns = ['predicted_speed', 'speed', 'image_index', 'sequence_name'] )
 
-    res = pd.DataFrame(res,columns=['predicted_speed', 'speed', 'image_index', 'sequence_name'])
-
-    if dataloader is None: #KITTTTI more adjustments has to be made groupby
-        for seq_name, g in lookup_df_kitti.groupby('sequence_name'):
-            last_row = g[(seq_name, len(g)-1)]
+    if dataloader is None:
+        for seq_name, g in res.groupby('sequence_name'):
+            last_row = g.loc[g['image_index'] == len(g)-1]
             last_row['image_index'] += 1
-            pd.concat([res,[last_row]])
+            res = pd.concat([res,last_row])
+            print('mon ami WAS GEEEEHT')
 
-    return res
+    windowAvg(res,datatype)
 
 def eval(model, criterion, validloader):
     model.eval()
@@ -123,10 +123,11 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         if valid:
             val_loss = eval(model,criterion, validloader)
             print(f'VALIDATION loss before starting epoch {epoch+1} is: {val_loss}')
-            curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
-            curve_valid.set_xdata(np.append(curve_valid.get_xdata(),(epoch*n_iter)+1))
+            if plot:
+                curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
+                curve_valid.set_xdata(np.append(curve_valid.get_xdata(),(epoch*n_iter)+1))
 
-        for i, (images, speeds, _) in enumerate(trainloader):
+        for i, (images, speeds, _,_) in enumerate(trainloader):
             images = images.to(device=device, dtype=torch.float)
             speeds = speeds.to(device=device,dtype=torch.float).view(-1,1)
 
@@ -148,17 +149,30 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
                     plt.draw()
                     plt.pause(0.0001)
 
-            if steps_per_epoch is not None and i>steps_per_epoch: break
+            if steps_per_epoch is not None and i > steps_per_epoch: break
 
         print(f'epoch {epoch+1} finished in {time.time()-epoch_start}')
         epoch_start = time.time()
 
     print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes')
 
+    if valid:
+        val_loss = eval(model,criterion,validloader)
+        print("final validation score =", val_loss)
+        if plot:
+            curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
+            curve_valid.set_xdata(np.append(curve_valid.get_xdata(),((num_epoch-1)*n_iter)+1))
+            ax.relim()
+            ax.autoscale_view(True,True,True)
+            #ax.set_ylim(bottom=0)
+            plt.draw()
+            plt.pause(0.0001)
+
     #SAVE MODEL & PLOT
     if save_model:
         print('saving..')
-        if plot: plt.savefig(title)
+        if plot:
+             plt.savefig(title)
         modeltar= "batch"+str(batch_size)+"_epoch"+str(num_epoch)+".tar"
         torch.save({'epoch':num_epoch,
                 'model_state_dict': model.state_dict(),
@@ -166,17 +180,15 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
                 os.path.join(MODEL_DIR, modeltar))
 
     if test:
-        print("final validation score =", eval(model,criterion,validloader))
-        print("making prediction on test set and evaluation on training+valid(train_full) set a valid set ")
-
-        windowAvg(make_predictions(model,'test'),'test')
-        windowAvg(make_predictions(model,'train'),'train')
-        windowAvg(make_predictions(model,'valid',dataloader=validloader),'valid')
+        print("making predictions test/train(full)/valid set ")
+        make_predictions(model,'test')
+        make_predictions(model,'train',kitti=kitti)
+        make_predictions(model,'valid',dataloader=validloader,kitti=kitti)
 
 def main(argv):
     def str2val(args):
         for idx,[name,strval] in enumerate(args):
-            if name in ["valid","test","plot","save_model"]:
+            if name in ["valid","test","plot","save_model","kitti"]:
                 if strval in ["True","true", "1","t"]:
                     args[idx]=(name,True)
                 elif strval in ["False","false", "0","f"]:
@@ -192,7 +204,7 @@ def main(argv):
             else:
                 print("ERRRRROR ARGUMENT PARSING:", name,strval)
 
-    opts, args = getopt.getopt(argv,"",["valid=","test=","plot=","save_model=","num_epoch=","batch_size=","interval=","steps_per_epoch="])
+    opts, args = getopt.getopt(argv,"",["valid=","test=","plot=","save_model=","num_epoch=","batch_size=","interval=","steps_per_epoch=", "kitti="])
     opts = [(name[2:],val) for name, val in opts]
     if opts: str2val(opts)
     train(**dict(opts))
