@@ -77,7 +77,6 @@ def make_predictions(model, datatype, dataloader=None, kitti=False):
             last_row = g.loc[g['image_index'] == len(g)-1]
             last_row['image_index'] += 1
             res = pd.concat([res,last_row])
-            print('mon ami WAS GEEEEHT')
 
     windowAvg(res,datatype)
 
