@@ -38,10 +38,8 @@ class RGBOpticalFlowDataset(Dataset):
         return len(self.dframe)
 
     def __getitem__(self, idx):
-
         if torch.is_tensor(idx):
             idx = idx.tolist()
-
         '''
         id1 = self.dframe.index[idx]
         id2 = id1 + 1
@@ -49,20 +47,16 @@ class RGBOpticalFlowDataset(Dataset):
         row2 = self.lookup_df.iloc[[id2]]
         '''
         row1 = self.dframe.iloc[idx]
-        seq_name,id1 = row1[['sequence_name', 'image_index']]
+        seq_name, id1 = row1[['sequence_name', 'image_index']]
         id2 = id1 + 1
         row2 = self.lookup_df.loc[(seq_name, id2)]
 
-
         bright_factor = 0.2 + np.random.uniform()
-
         x1, y1 = preprocess_image_from_path(os.path.join(self.root_dir,row1['image_path']), row1['speed'],
                                             bright_factor=bright_factor,train_mode=self.train_mode,kitti=self.kitti)
-
         # preprocess another image
         x2, y2 = preprocess_image_from_path(os.path.join(self.root_dir,row2['image_path']), row2['speed'],
                                             bright_factor=bright_factor,train_mode=self.train_mode, kitti=self.kitti)
-
         # compute optical flow send in images as RGB
         rgb_diff = opticalFlowDense(x1, x2)
 
@@ -80,49 +74,42 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
 
     if datatype == 'train':
         dframe, lookup_df = train_valid_split(os.path.join(rootcsv,csv_file))
-        lookup_df = lookup_df.set_index(['sequence_name','image_index']).sort_index()
-
         train_set = RGBOpticalFlowDataset('train', rootD, dframe, lookup_df)
         valid_set = RGBOpticalFlowDataset('valid', rootD, dframe, lookup_df)
         shape = tuple(train_set[0][0].shape)
 
         if kitti: #if kitti is mixed than we combine datasets
             dframe_kitti, lookup_df_kitti = train_valid_split_kitti(os.path.join(CLEAN_KITTI_DATA_PATH,'train_meta.csv'))
-            lookup_df_kitti = lookup_df_kitti.set_index(['sequence_name','image_index']).sort_index()
-
             train_set_kitti = RGBOpticalFlowDataset('train', rootD, dframe_kitti, lookup_df_kitti, kitti=True)
             valid_set_kitti = RGBOpticalFlowDataset('valid', rootD, dframe_kitti, lookup_df_kitti, kitti=True)
-            print('here')
             assert(shape == tuple(train_set_kitti[0][0].shape) )
-            print('here2')
 
             train_set = ConcatDataset([train_set,train_set_kitti])
             valid_set = ConcatDataset([valid_set,valid_set_kitti])
 
         trainloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory= True, num_workers=8)#, collate_fn=collate_fn)
-        validloader = DataLoader(valid_set, batch_size=batch_size, pin_memory=True,num_workers=8)
+        validloader = DataLoader(valid_set, batch_size=1, pin_memory=True, num_workers=8)
 
         return trainloader, validloader ,shape
 
     else:
-        test_data = pd.read_csv(os.path.join(rootcsv, csv_file))
-        test_data['datatype'] = 'test'
-        test_lookup_df = test_data.set_index(['sequence_name','image_index']).sort_index()
+        test_lookup_df = pd.read_csv(os.path.join(rootcsv, csv_file)).set_index(['sequence_name','image_index']).sort_index()
+        test_dframe = test_lookup_df.iloc[:-1].reset_index()
+        test_dframe['datatype'] = 'test'
 
-        test_set = RGBOpticalFlowDataset('test', rootD, test_data.iloc[:-1], test_lookup_df)
+        test_set = RGBOpticalFlowDataset('test', rootD, test_dframe, test_lookup_df)
         shape = tuple(test_set[0][0].shape)
 
         if kitti:
-            lookup_df_kitti = pd.read_csv(os.path.join(CLEAN_KITTI_DATA_PATH,'train_meta.csv'))
-            test_data_kitti = pd.concat([g[:-1] for g_id, g in lookup_df_kitti.groupby('sequence_name') ])
-            test_data_kitti['datatype'] = 'test'
-            lookup_df_kitti = lookup_df_kitti.set_index(['sequence_name','image_index']).sort_index()
+            lookup_df_kitti = pd.read_csv(os.path.join(CLEAN_KITTI_DATA_PATH,'train_meta.csv')).set_index(['sequence_name','image_index']).sort_index()
+            test_dframe_kitti = pd.concat([g[:-1] for g_id, g in lookup_df_kitti.groupby('sequence_name') ]).reset_index()
+            test_dframe_kitti['datatype'] = 'test'
 
-            test_set_kitti = RGBOpticalFlowDataset('test', rootD, test_data_kitti, lookup_df_kitti)
+            test_set_kitti = RGBOpticalFlowDataset('test', rootD, test_dframe_kitti, lookup_df_kitti)
             assert(shape == tuple(test_set_kitti[0][0].shape) )
             test_set = ConcatDataset([test_set,test_set_kitti])
 
-        testloader = DataLoader(test_set, batch_size= batch_size, pin_memory=True, num_workers=8)
+        testloader = DataLoader(test_set, batch_size=batch_size, pin_memory=True, num_workers=8)
 
         return testloader, shape
 

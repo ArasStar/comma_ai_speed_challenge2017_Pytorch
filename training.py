@@ -106,7 +106,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
     print('N of iteration', n_iter*num_epoch)
 
     if plot:
-        title = f'batchsize_{batch_size}__epoch_{num_epoch}'
+        title = f'batchsize_{batch_size}__epoch_{num_epoch}{"_kitti" if kitti else ""}'
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title(title)
@@ -136,7 +136,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             loss.backward()
             optimizer.step()
 
-            if  i==0 or i %interval==(interval-1):
+            if   interval== "epoch" or  i==0 or i %interval==(interval-1):
                 print(f'epoch:{epoch+1}/{num_epoch}, {i+1}/{n_iter} loss: {loss.item()}')
 
                 if plot:
@@ -144,8 +144,6 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
                     curve_train.set_xdata(np.append(curve_train.get_xdata(),(epoch*n_iter)+i+1))
                     ax.relim()
                     ax.autoscale_view(True,True,True)
-                    #ax.set_ylim(bottom=0)
-                    plt.draw()
                     plt.pause(0.0001)
 
             if steps_per_epoch is not None and i > steps_per_epoch: break
@@ -160,38 +158,41 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         print("final validation score =", val_loss)
         if plot:
             curve_valid.set_ydata(np.append(curve_valid.get_ydata(),val_loss))
-            curve_valid.set_xdata(np.append(curve_valid.get_xdata(),((num_epoch-1)*n_iter)+1))
+            curve_valid.set_xdata(np.append(curve_valid.get_xdata(),((num_epoch)*n_iter)+1))
             ax.relim()
             ax.autoscale_view(True,True,True)
-            #ax.set_ylim(bottom=0)
-            plt.draw()
-            plt.pause(0.0001)
 
     #SAVE MODEL & PLOT
     if save_model:
         print('saving..')
-        if plot:
-             plt.savefig(title)
+
         modeltar= "batch"+str(batch_size)+"_epoch"+str(num_epoch)+".tar"
         torch.save({'epoch':num_epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict()},
                 os.path.join(MODEL_DIR, modeltar))
 
+    if plot:
+        if save_model:
+            plt.savefig('plots/'+title)
+        #tried to close the figure here but couldn't find a way
     if test:
         print("making predictions test/train(full)/valid set ")
+        make_predictions(model,'valid',dataloader=validloader,kitti=kitti)
         make_predictions(model,'test')
         make_predictions(model,'train',kitti=kitti)
-        make_predictions(model,'valid',dataloader=validloader,kitti=kitti)
+
 
 def main(argv):
     def str2val(args):
         for idx,[name,strval] in enumerate(args):
-            if name in ["valid","test","plot","save_model","kitti"]:
+            if name in ["valid","test","plot","save_model","kitti","interval"]:
                 if strval in ["True","true", "1","t"]:
                     args[idx]=(name,True)
                 elif strval in ["False","false", "0","f"]:
                     args[idx]=(name,False)
+                elif name =="interval" and strval=="epoch":
+                    args[idx]=(name,"epoch")
                 else:
                     print("ERRRRROR ARGUMENT PARSING:", name,strval)
 
