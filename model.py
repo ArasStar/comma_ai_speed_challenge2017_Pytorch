@@ -84,8 +84,8 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
             valid_set_kitti = RGBOpticalFlowDataset('valid', rootD, dframe_kitti, lookup_df_kitti, kitti=True)
             assert(shape == tuple(train_set_kitti[0][0].shape) )
 
-            train_set = ConcatDataset([train_set,train_set_kitti])
-            valid_set = ConcatDataset([valid_set,valid_set_kitti])
+            train_set = ConcatDataset([train_set,train_set_kitti,train_set_kitti])
+            valid_set = ConcatDataset([valid_set,valid_set_kitti,valid_set_kitti])
 
         trainloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory= True, num_workers=8)#, collate_fn=collate_fn)
         validloader = DataLoader(valid_set, batch_size=1, pin_memory=True, num_workers=8)
@@ -107,7 +107,7 @@ def customloader(rootcsv, rootD, csv_file, batch_size, datatype, kitti=False):
 
             test_set_kitti = RGBOpticalFlowDataset('test', rootD, test_dframe_kitti, lookup_df_kitti)
             assert(shape == tuple(test_set_kitti[0][0].shape) )
-            test_set = ConcatDataset([test_set,test_set_kitti])
+            test_set = ConcatDataset([test_set,test_set_kitti,test_set_kitti])
 
         testloader = DataLoader(test_set, batch_size=batch_size, pin_memory=True, num_workers=8)
 

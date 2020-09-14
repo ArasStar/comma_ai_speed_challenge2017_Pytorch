@@ -110,8 +110,9 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title(title)
-        curve_train, = plt.plot([])
-        curve_valid, = plt.plot([])
+        curve_train, = plt.plot([],label = "training loss")
+        curve_valid, = plt.plot([], label = "validation loss")
+        plt.legend(loc='upper right')
         ax.set_ylim(bottom=0, top=50)
         #ax.set_xlim(left=-100, right=num_epoch*n_iter)
 
@@ -136,7 +137,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             loss.backward()
             optimizer.step()
 
-            if   interval== "epoch" or  i==0 or i %interval==(interval-1):
+            if   (i == 0 and epoch == 0) or (interval!="epoch" and i %interval==(interval-1)) or (interval=='epoch' and i == len(trainloader)-1):
                 print(f'epoch:{epoch+1}/{num_epoch}, {i+1}/{n_iter} loss: {loss.item()}')
 
                 if plot:
@@ -149,6 +150,9 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             if steps_per_epoch is not None and i > steps_per_epoch: break
 
         print(f'epoch {epoch+1} finished in {time.time()-epoch_start}')
+
+
+
         epoch_start = time.time()
 
     print(f'Training of {num_epoch} epoch finsihed in {time.time()-start_time} seconds -- approx. {(time.time()-start_time)/60.0} minutes')
@@ -161,6 +165,7 @@ def train(valid=False, test=False, plot=False ,save_model=False, num_epoch=15, b
             curve_valid.set_xdata(np.append(curve_valid.get_xdata(),((num_epoch)*n_iter)+1))
             ax.relim()
             ax.autoscale_view(True,True,True)
+            plt.pause(0.001)
 
     #SAVE MODEL & PLOT
     if save_model:

@@ -221,9 +221,7 @@ def windowAvg(dframe,datatype):
             plt.plot(seq_df[['image_index']], seq_df[['smooth_predicted_speed']], 'g.')
             plt.legend(['predicted speed', 'smooth predicted speed'], loc='upper right')
 
-
         elif datatype == 'valid':
-
             mse_ = "MSE:" + '{:.3f}'.format(mean_squared_error(seq_df["speed"], seq_df["predicted_speed"]))
             mse_smooth = "MSE(smooth):" + '{:.3f}'.format(mean_squared_error(seq_df["speed"], seq_df["smooth_predicted_speed"]))
             title = 'Predictions on '+datatype.upper()+' data - sequence :' + seq_name
@@ -243,16 +241,16 @@ def windowAvg(dframe,datatype):
             plt.title(title)
             ax.set_title(title)
 
-            plt.plot(seq_df[['image_index']], seq_df[['predicted_speed']], 'bx')
-            plt.plot(seq_df[['image_index']], seq_df[['smooth_predicted_speed']], 'g.')
-            plt.plot(seq_df[['image_index']], seq_df[['speed']], 'r.')
+            plt.plot(seq_df[['image_index']], seq_df[['predicted_speed']], 'bx', label='predicted_speed')
+            plt.plot(seq_df[['image_index']], seq_df[['smooth_predicted_speed']], 'g.',label= "25 window average")
+            plt.plot(seq_df[['image_index']], seq_df[['speed']], 'r.',label="ground truth")
             plt.plot([],[],label=mse_)
             plt.plot([],[],label=mse_smooth)
             plt.plot([],[],label=str(len(seq_df))+' samples')
             plt.legend( loc='upper right')
 
         plt.draw()
-        plt.pause(0.001)
+        plt.pause(0.05)
         print(title)
         title_path = os.path.join(__file__[:__file__.rfind('/')],'plots',seq_name)
         if not os.path.exists(title_path):
